@@ -141,6 +141,9 @@
   .leaflet-control-attribution { background: color-mix(in srgb, var(--surface) 80%, transparent) !important; color: var(--text-2); }
   .leaflet-control-attribution a { color: var(--text-2); }
   .bump-icon svg { display: block; }
+  .tiles-dark { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.35); }
+  .tiles-muted { filter: saturate(.25) brightness(1.04) contrast(.92); }
+  input[type=text] { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
 </style>
 </head>
 <body>
@@ -188,6 +191,8 @@
     <input type="number" id="fixLo" step="0.05" min="0"> <span class="muted">to</span> <input type="number" id="fixHi" step="0.05" min="0"></div>
   <div class="row"><label for="showBumps">Mark big hits (potholes, bumps)</label><input type="checkbox" id="showBumps"></div>
   <div class="row"><label for="bumpG">Hit threshold (g)</label><input type="number" id="bumpG" step="0.05" min="0.1"></div>
+  <div class="row"><label for="cartoKey" style="flex:0 0 auto">CARTO key</label><input type="text" id="cartoKey" placeholder="optional, for CARTO basemaps" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+  <p class="muted">The map works without a key. A free key from carto.com/basemaps/apikey adds CARTO's muted basemaps to the layer picker (bottom right).</p>
 
   <h3>Drives</h3>
   <div id="driveList"></div>
@@ -406,7 +411,7 @@ const $ = id => document.getElementById(id);
 const RAMP_LIGHT = ['#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#184f95', '#0d366b'];
 const RAMP_DARK  = ['#184f95', '#256abf', '#3987e5', '#6da7ec', '#9ec5f4', '#cde2fb'];
 
-const DEFAULTS = { view: 'agg', scale: 'auto', fixedLo: 0.2, fixedHi: 1.5, showBumps: true, bumpG: 0.6, base: null };
+const DEFAULTS = { view: 'agg', scale: 'auto', fixedLo: 0.2, fixedHi: 1.5, showBumps: true, bumpG: 0.6, base: null, cartoKey: '' };
 function loadSettings() {
   try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('bumpmap.settings') || '{}')); }
   catch (e) { return Object.assign({}, DEFAULTS); }
@@ -445,14 +450,22 @@ const Store = {
 const prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
 const map = L.map('map', { zoomControl: false, preferCanvas: true, worldCopyJump: true }).setView([30, -40], 3);
 const renderer = L.canvas({ tolerance: 12 });
-const tileOpts = { subdomains: 'abcd', maxZoom: 20,
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>' };
+// Basemaps: OpenStreetMap tiles need no key. "Dark" is the same tiles inverted
+// in CSS; "Light" is desaturated so the colored streets stand out.
+const OSM_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 const BASES = {
-  'Dark': { layer: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', tileOpts), dark: true },
-  'Light': { layer: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', tileOpts), dark: false },
-  'Streets': { layer: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }), dark: false },
+  'Dark': { layer: L.tileLayer(OSM_URL, { maxZoom: 19, attribution: OSM_ATTR, className: 'tiles-dark' }), dark: true },
+  'Light': { layer: L.tileLayer(OSM_URL, { maxZoom: 19, attribution: OSM_ATTR, className: 'tiles-muted' }), dark: false },
+  'Full color': { layer: L.tileLayer(OSM_URL, { maxZoom: 19, attribution: OSM_ATTR }), dark: false },
 };
+// Optional: CARTO's muted basemaps, if a free key is entered in settings (carto.com/basemaps/apikey).
+if (S.settings.cartoKey) {
+  const k = encodeURIComponent(S.settings.cartoKey);
+  const cartoOpts = { maxZoom: 20, attribution: OSM_ATTR + ' &copy; <a href="https://carto.com/attributions">CARTO</a>' };
+  BASES['CARTO dark'] = { layer: L.tileLayer(`https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png?key=${k}`, cartoOpts), dark: true };
+  BASES['CARTO light'] = { layer: L.tileLayer(`https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}{r}.png?key=${k}`, cartoOpts), dark: false };
+}
 let baseName = BASES[S.settings.base] ? S.settings.base : (prefersDark ? 'Dark' : 'Light');
 BASES[baseName].layer.addTo(map);
 S.ramp = BASES[baseName].dark ? RAMP_DARK : RAMP_LIGHT;
@@ -750,6 +763,7 @@ function renderSettings() {
   $('fixedRow').style.display = st.scale === 'fixed' ? 'flex' : 'none';
   $('fixLo').value = st.fixedLo; $('fixHi').value = st.fixedHi;
   $('showBumps').checked = st.showBumps; $('bumpG').value = st.bumpG;
+  $('cartoKey').value = st.cartoKey || '';
 }
 function changed() { saveSettings(); renderSettings(); redraw(); }
 $('viewSeg').onclick = e => { if (e.target.dataset.v) { S.settings.view = e.target.dataset.v; changed(); } };
@@ -758,6 +772,15 @@ $('fixLo').onchange = e => { const v = parseFloat(e.target.value); if (v >= 0) {
 $('fixHi').onchange = e => { const v = parseFloat(e.target.value); if (v > 0) { S.settings.fixedHi = v; changed(); } };
 $('showBumps').onchange = e => { S.settings.showBumps = e.target.checked; changed(); };
 $('bumpG').onchange = e => { const v = parseFloat(e.target.value); if (v > 0) { S.settings.bumpG = v; changed(); } };
+$('cartoKey').onchange = e => {
+  const v = e.target.value.trim();
+  if (v === (S.settings.cartoKey || '')) return;
+  S.settings.cartoKey = v;
+  if (v) S.settings.base = 'CARTO dark'; else if (/^CARTO/.test(S.settings.base || '')) S.settings.base = null;
+  saveSettings();
+  if (S.recording) { toast('Key saved. It takes effect after this drive.'); return; }
+  location.reload();
+};
 
 function confirmTap(btn, label, action) {
   if (btn.dataset.armed) { action(); return; }
