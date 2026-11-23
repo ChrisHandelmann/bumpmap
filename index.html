@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BumpMap">
+<meta name="theme-color" content="#1a1a19">
+<title>BumpMap</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb;
+    --surface-2: #f0efec;
+    --text: #0b0b0b;
+    --text-2: #52514e;
+    --border: rgba(0,0,0,.12);
+    --accent: #2a78d6;
+    --rec: #e34948;
+    --warn: #fab219;
+    --panel-h: 140px;
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-l: env(safe-area-inset-left, 0px);
+    --safe-r: env(safe-area-inset-right, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface: #1a1a19;
+      --surface-2: #2a2a28;
+      --text: #f0efec;
+      --text-2: #c3c2b7;
+      --border: rgba(255,255,255,.14);
+      --accent: #3987e5;
+      --rec: #e66767;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--surface); color: var(--text);
+    font: 15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+  #map { position: fixed; inset: 0; background: var(--surface-2); }
+  button { font: inherit; color: inherit; }
+
+  /* top bar */
+  .top { position: fixed; top: calc(var(--safe-t) + 10px); left: calc(var(--safe-l) + 10px);
+    right: calc(var(--safe-r) + 10px); display: flex; gap: 8px; align-items: center; z-index: 1000; pointer-events: none; }
+  .chip { pointer-events: auto; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 999px; padding: 7px 12px; box-shadow: 0 2px 10px rgba(0,0,0,.15);
+    display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .brand { font-weight: 650; letter-spacing: .2px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-2); }
+  .dot.on { background: var(--rec); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .spacer { flex: 1; }
+  .iconbtn { pointer-events: auto; width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--border);
+    background: var(--surface); box-shadow: 0 2px 10px rgba(0,0,0,.15); display: grid; place-items: center; cursor: pointer; }
+  .iconbtn svg { width: 20px; height: 20px; stroke: var(--text); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #recenter { display: none; }
+
+  /* bottom panel */
+  .panel { position: fixed; z-index: 1000; left: 50%; transform: translateX(-50%);
+    bottom: calc(var(--safe-b) + 10px); width: min(520px, calc(100% - 20px - var(--safe-l) - var(--safe-r)));
+    background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.22); padding: 12px; }
+  .summary { color: var(--text-2); font-size: 13px; margin: 0 2px 10px; }
+  .stats { display: none; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+  .rec .stats { display: grid; }
+  .rec .summary { display: none; }
+  .stat { background: var(--surface-2); border-radius: 10px; padding: 6px 8px; min-width: 0; }
+  .stat .k { font-size: 11px; color: var(--text-2); letter-spacing: .2px; white-space: nowrap; }
+  .stat .v { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat .v small { font-size: 11px; font-weight: 500; color: var(--text-2); }
+  #spark { display: none; width: 100%; height: 54px; background: var(--surface-2); border-radius: 10px; margin-bottom: 8px; }
+  .rec #spark { display: block; }
+  .status { display: none; font-size: 13px; color: var(--text-2); margin: 0 2px 8px; min-height: 18px; }
+  .rec .status { display: block; }
+  .status.warn::before { content: "⚠ "; color: var(--warn); }
+  #recBtn { width: 100%; height: 54px; border: 0; border-radius: 14px; background: var(--accent); color: #fff;
+    font-size: 17px; font-weight: 650; cursor: pointer; }
+  .rec #recBtn { background: var(--rec); }
+
+  /* legend */
+  .legend { position: fixed; z-index: 999; left: calc(var(--safe-l) + 10px); bottom: calc(var(--panel-h) + var(--safe-b) + 20px);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 7px 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 12px; color: var(--text-2); display: none; }
+  .legend.show { display: block; }
+  .legend .bar { width: 150px; height: 8px; border-radius: 4px; margin: 4px 0 3px; }
+  .legend .ends { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+  .legend .ttl { color: var(--text); font-weight: 600; }
+  .leaflet-bottom { bottom: calc(var(--panel-h) + var(--safe-b) + 12px); }
+
+  /* sheet */
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 1999; display: none; }
+  .sheet { position: fixed; z-index: 2000; left: 0; right: 0; bottom: 0; max-height: 86vh; overflow-y: auto;
+    background: var(--surface); border-radius: 20px 20px 0 0; box-shadow: 0 -6px 30px rgba(0,0,0,.3);
+    padding: 14px calc(var(--safe-r) + 16px) calc(var(--safe-b) + 22px) calc(var(--safe-l) + 16px);
+    transform: translateY(105%); transition: transform .22s ease; }
+  .sheet.open { transform: none; }
+  .sheet.open + .scrim, .scrim.show { display: block; }
+  .sheet h2 { font-size: 18px; margin: 4px 0 12px; display: flex; align-items: center; }
+  .sheet h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-2); margin: 18px 0 8px; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  .row label { flex: 1; }
+  .seg { display: inline-flex; background: var(--surface-2); border-radius: 10px; padding: 3px; }
+  .seg button { border: 0; background: transparent; padding: 7px 12px; border-radius: 8px; cursor: pointer; color: var(--text-2); }
+  .seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.15); font-weight: 600; }
+  input[type=number] { width: 72px; font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text); }
+  input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); }
+  .btn { border: 1px solid var(--border); background: var(--surface-2); padding: 9px 14px; border-radius: 10px; cursor: pointer; }
+  .btn.danger { color: var(--rec); }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+  .drive { display: flex; gap: 8px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); }
+  .drive .meta { flex: 1; min-width: 0; }
+  .drive .meta b { display: block; font-weight: 600; }
+  .drive .meta span { font-size: 13px; color: var(--text-2); }
+  .drive .btn { padding: 7px 10px; font-size: 13px; }
+  .muted { color: var(--text-2); font-size: 13px; }
+  .tips { font-size: 13px; color: var(--text-2); padding-left: 18px; margin: 6px 0; }
+  .tips li { margin: 4px 0; }
+  .close { margin-left: auto; }
+
+  .toast { position: fixed; z-index: 3000; left: 50%; top: calc(var(--safe-t) + 62px); transform: translateX(-50%);
+    background: var(--text); color: var(--surface); padding: 10px 14px; border-radius: 12px; font-size: 14px;
+    max-width: min(92vw, 460px); box-shadow: 0 4px 18px rgba(0,0,0,.3); opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--surface); color: var(--text); }
+  .leaflet-popup-content { margin: 10px 14px; font-size: 13px; line-height: 1.45; }
+  .leaflet-popup-content b { font-size: 15px; }
+  .leaflet-container a.leaflet-popup-close-button { color: var(--text-2); }
+  .leaflet-control-layers, .leaflet-bar a { background: var(--surface); color: var(--text); }
+  .leaflet-control-attribution { background: color-mix(in srgb, var(--surface) 80%, transparent) !important; color: var(--text-2); }
+  .leaflet-control-attribution a { color: var(--text-2); }
+  .bump-icon svg { display: block; }
+</style>
+</head>
+<body>
+<div id="map" aria-label="Road bumpiness map"></div>
+
+<div class="top">
+  <div class="chip"><span class="dot" id="recDot"></span><span class="brand">BumpMap</span><span class="muted" id="clock"></span></div>
+  <div class="spacer"></div>
+  <button class="iconbtn" id="recenter" title="Follow my position" aria-label="Follow my position">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+  </button>
+  <button class="iconbtn" id="menuBtn" title="Drives & settings" aria-label="Drives and settings">
+    <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  </button>
+</div>
+
+<div class="legend" id="legend">
+  <div class="ttl" id="legendTitle">Bumpiness</div>
+  <div class="bar" id="legendBar"></div>
+  <div class="ends"><span id="legLo">smooth</span><span id="legHi">rough</span></div>
+</div>
+
+<section class="panel" id="panel">
+  <div class="summary" id="summary">Loading…</div>
+  <div class="stats">
+    <div class="stat"><div class="k">km/h</div><div class="v" id="sSpeed">–</div></div>
+    <div class="stat"><div class="k">Now, m/s²</div><div class="v" id="sNow">–</div></div>
+    <div class="stat"><div class="k">Scored</div><div class="v" id="sSegs">0</div></div>
+    <div class="stat"><div class="k">GPS ±m</div><div class="v" id="sGps">–</div></div>
+  </div>
+  <canvas id="spark" aria-label="Live vertical vibration, last 6 seconds"></canvas>
+  <div class="status" id="status"></div>
+  <button id="recBtn">Start drive</button>
+</section>
+
+<aside class="sheet" id="sheet" aria-label="Drives and settings">
+  <h2>Drives &amp; settings <button class="btn close" id="closeSheet">Done</button></h2>
+
+  <h3>Map</h3>
+  <div class="row"><label>Show</label>
+    <div class="seg" id="viewSeg"><button data-v="agg">All passes combined</button><button data-v="raw">Each pass</button></div></div>
+  <div class="row"><label>Color scale</label>
+    <div class="seg" id="scaleSeg"><button data-v="auto">Relative</button><button data-v="fixed">Fixed</button></div></div>
+  <div class="row" id="fixedRow"><label>Fixed range (m/s²)</label>
+    <input type="number" id="fixLo" step="0.05" min="0"> <span class="muted">to</span> <input type="number" id="fixHi" step="0.05" min="0"></div>
+  <div class="row"><label for="showBumps">Mark big hits (potholes, bumps)</label><input type="checkbox" id="showBumps"></div>
+  <div class="row"><label for="bumpG">Hit threshold (g)</label><input type="number" id="bumpG" step="0.05" min="0.1"></div>
+
+  <h3>Drives</h3>
+  <div id="driveList"></div>
+
+  <h3>Data</h3>
+  <div class="btns">
+    <button class="btn" id="expGeo">Export GeoJSON</button>
+    <button class="btn" id="expCsv">Export CSV</button>
+    <button class="btn" id="impBtn">Import GeoJSON</button>
+    <button class="btn danger" id="clearAll">Delete all</button>
+  </div>
+  <input type="file" id="impFile" accept=".geojson,.json,application/json,application/geo+json" hidden>
+  <p class="muted">Drives are stored only on this phone, in this browser. Export now and then to keep a backup or to merge data from another phone.</p>
+
+  <h3>Tips</h3>
+  <ul class="tips">
+    <li>Mount the phone firmly (dash or vent mount). A loose phone in a cupholder rattles and inflates readings. Keep the same mount for comparable maps.</li>
+    <li>Tap Start before you pull out, then leave the phone alone. The screen stays on while recording; locking it or switching apps pauses recording.</li>
+    <li>Segments below 15 km/h, with weak GPS, or where the phone moved in its mount are skipped.</li>
+    <li>Bumpiness = vertical vibration (RMS, m/s²) over each 20 m, scaled to what it would be at 40 km/h.</li>
+  </ul>
+</aside>
+<div class="scrim" id="scrim"></div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+'use strict';
+// === CORE START ===
+// Signal processing and aggregation. No DOM, no Leaflet: testable on its own.
+const G = 9.80665;
+const CFG = {
+  SEG_LEN_M: 20,       // distance covered by one scored segment
+  MIN_SPEED_MS: 4.17,  // 15 km/h; slower segments are not scored
+  MAX_ACC_M: 25,       // GPS fixes less accurate than this are ignored
+  MAX_JUMP_M: 150,     // a jump this big between fixes starts a fresh segment
+  MAX_GAP_S: 10,       // so does a gap this long (app paused, tunnel)
+  GRAVITY_TAU_S: 1.0,  // low-pass time constant for the gravity estimate
+  MIN_SAMPLES: 15,     // motion samples needed to score a segment
+  MAX_TILT_DEG: 20,    // if the phone's orientation changes more than this, drop the segment
+  REF_SPEED_MS: 11.11, // 40 km/h: speed the index is normalised to
+  SPEED_EXP: 0.5,      // vibration RMS ~ speed^0.5 for a typical (ISO 8608) road profile
+  GRID_M: 15,          // cell size used to combine passes over the same stretch
+};
+
+const r2 = x => Math.round(x * 100) / 100;
+const r3 = x => Math.round(x * 1000) / 1000;
+const r6 = x => Math.round(x * 1e6) / 1e6;
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371008.8, k = Math.PI / 180;
+  const dLat = (lat2 - lat1) * k, dLon = (lon2 - lon1) * k;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * k) * Math.cos(lat2 * k) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+function speedNormalise(rms, speed) {
+  return rms * Math.pow(CFG.REF_SPEED_MS / speed, CFG.SPEED_EXP);
+}
+
+// Turns raw accelerometer + GPS streams into scored 20 m segments.
+// Vertical vibration is found by projecting each sample onto a running
+// estimate of gravity, so it works however the phone is mounted.
+class Recorder {
+  constructor(onSegment) {
+    this.onSegment = onSegment || (() => {});
+    this.g = null; this.lastT = null; this.lastFix = null; this.seg = null; this.lastSpeed = 0;
+    this.stats = { kept: 0, slow: 0, sparse: 0, moved: 0, poorFix: 0 };
+  }
+  unitG() {
+    const g = this.g, n = Math.hypot(g[0], g[1], g[2]) || 1;
+    return [g[0] / n, g[1] / n, g[2] / n];
+  }
+  // ax, ay, az: accelerationIncludingGravity in m/s²; tMs: event timestamp in ms.
+  // Returns the vertical (gravity-axis) vibration in m/s².
+  motion(ax, ay, az, tMs) {
+    if (!Number.isFinite(ax) || !Number.isFinite(ay) || !Number.isFinite(az)) return null;
+    if (!this.g) { this.g = [ax, ay, az]; this.lastT = tMs; return 0; }
+    let dt = (tMs - this.lastT) / 1000;
+    this.lastT = tMs;
+    if (!(dt > 0) || dt > 0.25) dt = 1 / 60;
+    const k = dt / (CFG.GRAVITY_TAU_S + dt);
+    const g = this.g;
+    g[0] += k * (ax - g[0]); g[1] += k * (ay - g[1]); g[2] += k * (az - g[2]);
+    const n = Math.hypot(g[0], g[1], g[2]) || 1;
+    const v = ((ax - g[0]) * g[0] + (ay - g[1]) * g[1] + (az - g[2]) * g[2]) / n;
+    const s = this.seg;
+    if (s) {
+      if (!s.g0) s.g0 = this.unitG();
+      s.sumSq += v * v; s.n++;
+      const av = Math.abs(v);
+      if (av > s.peak) { s.peak = av; s.peakPos = this.lastFix ? [this.lastFix.lat, this.lastFix.lon] : null; }
+    }
+    return v;
+  }
+  // speed in m/s from the GPS chip (null or negative if unknown); tMs: fix time in ms.
+  gps(lat, lon, acc, speed, tMs) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return 'bad';
+    if (Number.isFinite(acc) && acc > CFG.MAX_ACC_M) { this.stats.poorFix++; return 'poor'; }
+    const fix = { lat, lon, t: tMs };
+    const prev = this.lastFix;
+    this.lastFix = fix;
+    if (!prev || !this.seg) { this.startSeg(fix); return 'start'; }
+    const dt = (tMs - prev.t) / 1000;
+    if (!(dt > 0)) return 'dup';
+    const d = haversine(prev.lat, prev.lon, lat, lon);
+    if (d > CFG.MAX_JUMP_M || dt > CFG.MAX_GAP_S) { this.startSeg(fix); return 'gap'; }
+    const spd = (Number.isFinite(speed) && speed >= 0) ? speed : d / dt;
+    this.lastSpeed = spd;
+    const s = this.seg;
+    s.dist += d; s.spdSum += spd; s.spdN++;
+    s.pts.push([lat, lon]);
+    if (s.dist >= CFG.SEG_LEN_M) this.closeSeg(fix);
+    return 'ok';
+  }
+  closeSeg(fix) {
+    const s = this.seg;
+    const spd = s.spdN ? s.spdSum / s.spdN : 0;
+    let reason = null;
+    if (spd < CFG.MIN_SPEED_MS) reason = 'slow';
+    else if (s.n < CFG.MIN_SAMPLES) reason = 'sparse';
+    else if (s.g0 && this.g) {
+      const u = this.unitG();
+      const cos = s.g0[0] * u[0] + s.g0[1] * u[1] + s.g0[2] * u[2];
+      if (cos < Math.cos(CFG.MAX_TILT_DEG * Math.PI / 180)) reason = 'moved';
+    }
+    if (reason) this.stats[reason]++;
+    else {
+      const rms = Math.sqrt(s.sumSq / s.n);
+      this.stats.kept++;
+      this.onSegment({
+        t: s.t0,
+        pts: s.pts.map(p => [r6(p[0]), r6(p[1])]),
+        len: Math.round(s.dist * 10) / 10,
+        speed: r2(spd),
+        rms: r3(rms),
+        peak: r3(s.peak),
+        pk: s.peakPos ? [r6(s.peakPos[0]), r6(s.peakPos[1])] : null,
+        index: r3(speedNormalise(rms, spd)),
+        n: s.n,
+      });
+    }
+    this.startSeg(fix);
+  }
+  startSeg(fix) {
+    this.seg = { t0: fix.t, pts: [[fix.lat, fix.lon]], dist: 0, spdSum: 0, spdN: 0,
+                 sumSq: 0, n: 0, peak: 0, peakPos: null, g0: null };
+  }
+}
+
+function cellKey(lat, lon) {
+  const dLat = CFG.GRID_M / 111320;
+  const li = Math.floor(lat / dLat);
+  const dLon = CFG.GRID_M / (111320 * Math.cos((li + 0.5) * dLat * Math.PI / 180));
+  return li + ':' + Math.floor(lon / dLon);
+}
+
+function cellsForSeg(pts) {
+  const keys = new Set();
+  if (pts.length === 1) keys.add(cellKey(pts[0][0], pts[0][1]));
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [a1, o1] = pts[i], [a2, o2] = pts[i + 1];
+    const steps = Math.max(1, Math.ceil(haversine(a1, o1, a2, o2) / 5));
+    for (let j = 0; j <= steps; j++) {
+      const f = j / steps;
+      keys.add(cellKey(a1 + (a2 - a1) * f, o1 + (o2 - o1) * f));
+    }
+  }
+  return [...keys];
+}
+
+// Combine passes: each segment's value becomes the mean over the grid
+// cells it crosses of every pass through those cells. driveIds[i] (optional)
+// names the drive of segs[i], so "passes" counts drives, not segments.
+function aggregate(segs, driveIds) {
+  const cells = new Map();
+  const segCells = segs.map((s, i) => {
+    const ks = cellsForSeg(s.pts);
+    const id = driveIds ? driveIds[i] : i;
+    for (const k of ks) {
+      let c = cells.get(k);
+      if (!c) { c = { sum: 0, n: 0, drives: new Set() }; cells.set(k, c); }
+      c.sum += s.index; c.n++; c.drives.add(id);
+    }
+    return ks;
+  });
+  return segs.map((s, i) => {
+    let sum = 0, passes = 0;
+    const ks = segCells[i];
+    for (const k of ks) { const c = cells.get(k); sum += c.sum / c.n; passes += c.drives.size; }
+    return { value: sum / ks.length, passes: passes / ks.length };
+  });
+}
+
+function quantile(sorted, q) {
+  if (!sorted.length) return NaN;
+  const p = (sorted.length - 1) * q, lo = Math.floor(p), hi = Math.ceil(p);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (p - lo);
+}
+
+function computeScale(values, settings) {
+  if (settings.scale === 'fixed' || values.length < 12) {
+    return { lo: settings.fixedLo, hi: Math.max(settings.fixedHi, settings.fixedLo + 0.05), mode: 'fixed' };
+  }
+  const s = [...values].sort((a, b) => a - b);
+  let lo = quantile(s, 0.05), hi = quantile(s, 0.95);
+  if (hi - lo < 0.05) { const m = (hi + lo) / 2; lo = m - 0.025; hi = m + 0.025; }
+  return { lo: Math.max(0, lo), hi, mode: 'auto' };
+}
+// === CORE END ===
+
+// ---------------- app ----------------
+const $ = id => document.getElementById(id);
+
+// Sequential single-hue ramp (blue). Low values sit close to the basemap and
+// recede; high values contrast with it. Dark basemaps get their own steps.
+const RAMP_LIGHT = ['#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#184f95', '#0d366b'];
+const RAMP_DARK  = ['#184f95', '#256abf', '#3987e5', '#6da7ec', '#9ec5f4', '#cde2fb'];
+
+const DEFAULTS = { view: 'agg', scale: 'auto', fixedLo: 0.2, fixedHi: 1.5, showBumps: true, bumpG: 0.6, base: null };
+function loadSettings() {
+  try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem('bumpmap.settings') || '{}')); }
+  catch (e) { return Object.assign({}, DEFAULTS); }
+}
+function saveSettings() { try { localStorage.setItem('bumpmap.settings', JSON.stringify(S.settings)); } catch (e) {} }
+
+const S = {
+  settings: loadSettings(), drives: [], cur: null, recording: false, recorder: null,
+  geoId: null, wakeLock: null, track: [], follow: true, scale: null, ramp: RAMP_DARK,
+  ring: new Float32Array(360), ringI: 0, ringN: 0, motionTimes: [], lastFix: null, lastFixAt: 0,
+  autosave: null, raf: null, startedAt: 0,
+};
+
+// ---- storage (IndexedDB, falls back to memory) ----
+const Store = {
+  db: null, mem: new Map(),
+  async open() {
+    try {
+      this.db = await new Promise((res, rej) => {
+        const r = indexedDB.open('bumpmap', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('drives', { keyPath: 'id' });
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      });
+    } catch (e) { this.db = null; console.warn('IndexedDB unavailable, data will not persist', e); }
+  },
+  os(mode) { return this.db.transaction('drives', mode).objectStore('drives'); },
+  wrap(r) { return new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); },
+  async all() { return this.db ? this.wrap(this.os('readonly').getAll()) : [...this.mem.values()]; },
+  async put(d) { if (!this.db) { this.mem.set(d.id, d); return; } return this.wrap(this.os('readwrite').put(d)); },
+  async del(id) { if (!this.db) { this.mem.delete(id); return; } return this.wrap(this.os('readwrite').delete(id)); },
+  async clear() { if (!this.db) { this.mem.clear(); return; } return this.wrap(this.os('readwrite').clear()); },
+};
+
+// ---- map ----
+const prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
+const map = L.map('map', { zoomControl: false, preferCanvas: true, worldCopyJump: true }).setView([30, -40], 3);
+const renderer = L.canvas({ tolerance: 12 });
+const tileOpts = { subdomains: 'abcd', maxZoom: 20,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>' };
+const BASES = {
+  'Dark': { layer: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', tileOpts), dark: true },
+  'Light': { layer: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', tileOpts), dark: false },
+  'Streets': { layer: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }), dark: false },
+};
+let baseName = BASES[S.settings.base] ? S.settings.base : (prefersDark ? 'Dark' : 'Light');
+BASES[baseName].layer.addTo(map);
+S.ramp = BASES[baseName].dark ? RAMP_DARK : RAMP_LIGHT;
+const segLayer = L.layerGroup().addTo(map);
+const bumpLayer = L.layerGroup().addTo(map);
+const liveLine = L.polyline([], { renderer, color: getComputedStyle(document.documentElement).getPropertyValue('--text-2').trim() || '#888',
+  weight: 2, opacity: 0.7, dashArray: '4 6', interactive: false }).addTo(map);
+const posMarker = L.circleMarker([0, 0], { renderer, radius: 7, color: '#fff', weight: 3, fillColor: '#2a78d6', fillOpacity: 1, interactive: false });
+const overlays = { 'Big hits': bumpLayer };
+L.control.layers(Object.fromEntries(Object.entries(BASES).map(([k, v]) => [k, v.layer])), overlays, { position: 'bottomright' }).addTo(map);
+map.on('baselayerchange', e => {
+  baseName = e.name; S.settings.base = e.name; saveSettings();
+  S.ramp = BASES[e.name].dark ? RAMP_DARK : RAMP_LIGHT;
+  redraw();
+});
+map.on('dragstart', () => { if (S.recording) { S.follow = false; $('recenter').style.display = 'grid'; } });
+$('recenter').onclick = () => {
+  S.follow = true; $('recenter').style.display = 'none';
+  if (S.lastFix) map.setView([S.lastFix.lat, S.lastFix.lon], Math.max(map.getZoom(), 16));
+};
+
+const bumpIcon = L.divIcon({
+  className: 'bump-icon', iconSize: [20, 18], iconAnchor: [10, 12],
+  html: '<svg width="20" height="18" viewBox="0 0 20 18"><path d="M10 1.5 L19 16.5 H1 Z" fill="#fab219" stroke="#1a1a19" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 6.5v5" stroke="#1a1a19" stroke-width="2" stroke-linecap="round"/><circle cx="10" cy="14" r="1.1" fill="#1a1a19"/></svg>',
+});
+
+function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
+function colorAt(t) {
+  const ramp = S.ramp;
+  t = Math.min(1, Math.max(0, t)) * (ramp.length - 1);
+  const i = Math.min(ramp.length - 2, Math.floor(t)), f = t - i;
+  const a = hexToRgb(ramp[i]), b = hexToRgb(ramp[i + 1]);
+  return `rgb(${a.map((x, j) => Math.round(x + (b[j] - x) * f)).join(',')})`;
+}
+function colorFor(v) { const sc = S.scale; return colorAt((v - sc.lo) / (sc.hi - sc.lo)); }
+
+const fmtDate = t => new Date(t).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const kmh = ms => Math.round(ms * 3.6);
+
+function popupHtml(d, s, a) {
+  const combined = S.settings.view === 'agg';
+  return `<b>Bumpiness ${a.value.toFixed(2)}</b> m/s²<br>` +
+    (combined ? `<span>Combined from ~${Math.max(1, Math.round(a.passes))} pass${Math.round(a.passes) > 1 ? 'es' : ''}</span><br>` : '') +
+    `This pass: ${s.index.toFixed(2)} at ${kmh(s.speed)} km/h (raw ${s.rms.toFixed(2)}), peak ${(s.peak / G).toFixed(2)} g<br>` +
+    `<span style="color:var(--text-2)">${fmtDate(s.t)}</span>`;
+}
+
+function allItems() {
+  const out = [];
+  for (const d of S.drives) for (const s of d.segments) out.push([d, s]);
+  if (S.cur) for (const s of S.cur.segments) out.push([S.cur, s]);
+  return out;
+}
+
+function addSegLine(d, s, a) {
+  const line = L.polyline(s.pts, { renderer, color: colorFor(a.value), weight: 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round' });
+  line.bindPopup(() => popupHtml(d, s, a));
+  segLayer.addLayer(line);
+}
+function addBump(s) {
+  if (!S.settings.showBumps || !s.pk || s.peak < S.settings.bumpG * G) return;
+  L.marker(s.pk, { icon: bumpIcon, keyboard: false })
+    .bindPopup(`<b>Big hit: ${(s.peak / G).toFixed(2)} g</b><br>at ${kmh(s.speed)} km/h<br><span style="color:var(--text-2)">${fmtDate(s.t)}</span>`)
+    .addTo(bumpLayer);
+}
+
+function redraw() {
+  segLayer.clearLayers(); bumpLayer.clearLayers();
+  const items = allItems();
+  const segs = items.map(x => x[1]);
+  const vals = S.settings.view === 'agg' ? aggregate(segs, items.map(x => x[0].id)) : segs.map(s => ({ value: s.index, passes: 1 }));
+  S.scale = computeScale(vals.map(v => v.value), S.settings);
+  const order = vals.map((_, i) => i).sort((i, j) => vals[i].value - vals[j].value); // roughest drawn on top
+  for (const i of order) addSegLine(items[i][0], items[i][1], vals[i]);
+  for (const s of segs) addBump(s);
+  updateLegend(segs.length);
+  updateSummary();
+}
+
+function updateLegend(n) {
+  const lg = $('legend');
+  lg.classList.toggle('show', n > 0);
+  if (!n) return;
+  const stops = S.ramp.map((c, i) => `${c} ${Math.round(i / (S.ramp.length - 1) * 100)}%`).join(',');
+  $('legendBar').style.background = `linear-gradient(90deg, ${stops})`;
+  $('legLo').textContent = `smooth ${S.scale.lo.toFixed(2)}`;
+  $('legHi').textContent = `${S.scale.hi.toFixed(2)} rough`;
+  $('legendTitle').textContent = `Bumpiness, m/s² · ${S.scale.mode === 'auto' ? 'relative' : 'fixed'}`;
+}
+
+function driveKm(d) { return d.segments.reduce((a, s) => a + s.len, 0) / 1000; }
+function updateSummary() {
+  const n = S.drives.length, km = S.drives.reduce((a, d) => a + driveKm(d), 0);
+  $('summary').textContent = n
+    ? `${n} drive${n > 1 ? 's' : ''} · ${km.toFixed(1)} km scored. Tap a street for details.`
+    : 'No drives yet. Mount your phone, tap Start, then drive normally.';
+}
+
+// ---- recording ----
+function setStatus(msg, warn) { const el = $('status'); el.textContent = msg || ''; el.classList.toggle('warn', !!warn); }
+let toastTimer = null;
+function toast(msg, ms = 3500) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+async function wake() {
+  try {
+    if ('wakeLock' in navigator) {
+      S.wakeLock = await navigator.wakeLock.request('screen');
+      return true;
+    }
+  } catch (e) { console.warn('wake lock', e); }
+  return false;
+}
+
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a) return;
+  const t = e.timeStamp || performance.now();
+  const v = S.recorder.motion(a.x, a.y, a.z, t);
+  if (v === null) return;
+  S.ring[S.ringI] = v; S.ringI = (S.ringI + 1) % S.ring.length; S.ringN = Math.min(S.ringN + 1, S.ring.length);
+  S.motionTimes.push(performance.now());
+}
+
+function onFix(pos) {
+  const c = pos.coords;
+  S.lastFixAt = performance.now();
+  S.lastAcc = c.accuracy;
+  const r = S.recorder.gps(c.latitude, c.longitude, c.accuracy, c.speed, pos.timestamp);
+  if (r === 'poor' || r === 'bad') return;
+  const first = !S.lastFix;
+  S.lastFix = { lat: c.latitude, lon: c.longitude };
+  S.track.push([c.latitude, c.longitude]);
+  liveLine.setLatLngs(S.track);
+  posMarker.setLatLng([c.latitude, c.longitude]);
+  if (!map.hasLayer(posMarker)) posMarker.addTo(map);
+  if (first) map.setView([c.latitude, c.longitude], 17);
+  else if (S.follow) map.panTo([c.latitude, c.longitude], { animate: true, duration: 0.5 });
+}
+function onFixErr(err) {
+  const msg = err.code === 1 ? 'Location permission denied. Allow location for this site and try again.'
+    : err.code === 3 ? 'Waiting for GPS…' : 'GPS error: ' + err.message;
+  setStatus(msg, true);
+  if (err.code === 1) stopDrive();
+}
+
+function onSegment(seg) {
+  if (!S.cur) return;
+  S.cur.segments.push(seg);
+  addSegLine(S.cur, seg, { value: seg.index, passes: 1 });
+  addBump(seg);
+  if (S.cur.segments.length === 1) updateLegend(1);
+}
+
+function drawSpark() {
+  const cv = $('spark'), dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const css = getComputedStyle(document.documentElement);
+  ctx.strokeStyle = css.getPropertyValue('--border'); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+  const n = S.ringN; if (n < 2) return;
+  let m = 2;
+  for (let i = 0; i < n; i++) m = Math.max(m, Math.abs(S.ring[i]));
+  ctx.strokeStyle = css.getPropertyValue('--accent'); ctx.lineWidth = 2; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  const len = S.ring.length;
+  for (let i = 0; i < n; i++) {
+    const v = S.ring[(S.ringI - n + i + len) % len];
+    const x = (len - n + i) / (len - 1) * w, y = h / 2 - v / m * (h / 2 - 4);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.stroke();
+  const lbl = `±${m.toFixed(1)} m/s²`;
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.fillStyle = css.getPropertyValue('--surface-2'); ctx.fillRect(2, 2, ctx.measureText(lbl).width + 8, 15);
+  ctx.fillStyle = css.getPropertyValue('--text-2'); ctx.fillText(lbl, 6, 13);
+}
+
+let lastUi = 0;
+function loop(ts) {
+  if (!S.recording) return;
+  S.raf = requestAnimationFrame(loop);
+  if (ts - lastUi < 200) return;
+  lastUi = ts;
+  const now = performance.now();
+  while (S.motionTimes.length && now - S.motionTimes[0] > 1000) S.motionTimes.shift();
+  const hz = S.motionTimes.length;
+  // RMS over the last second
+  const k = Math.min(S.ringN, Math.max(hz, 1));
+  let ss = 0;
+  for (let i = 0; i < k; i++) { const v = S.ring[(S.ringI - 1 - i + S.ring.length) % S.ring.length]; ss += v * v; }
+  const rmsNow = k ? Math.sqrt(ss / k) : 0;
+  const spd = S.recorder.lastSpeed;
+  $('sSpeed').textContent = S.lastFix ? kmh(spd) : '–';
+  $('sNow').textContent = hz ? rmsNow.toFixed(2) : '–';
+  $('sSegs').textContent = S.cur ? S.cur.segments.length : 0;
+  $('sGps').textContent = Number.isFinite(S.lastAcc) ? Math.round(S.lastAcc) : '–';
+  const secs = Math.floor((Date.now() - S.startedAt) / 1000);
+  $('clock').textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  drawSpark();
+
+  const sinceStart = Date.now() - S.startedAt;
+  if (!hz && sinceStart > 2500) setStatus('No motion-sensor data. This browser may block it; try Safari or Chrome over https.', true);
+  else if (!S.lastFix) setStatus('Waiting for GPS…');
+  else if (now - S.lastFixAt > 8000) setStatus('GPS signal lost…', true);
+  else if (Number.isFinite(S.lastAcc) && S.lastAcc > CFG.MAX_ACC_M) setStatus(`GPS weak (±${Math.round(S.lastAcc)} m); not scoring`, true);
+  else if (spd < CFG.MIN_SPEED_MS) setStatus('Below 15 km/h; not scoring');
+  else setStatus(`Recording · ${hz} Hz · ${S.wakeLock ? 'screen kept on' : 'keep the screen on'}`);
+}
+
+async function startDrive() {
+  // iOS: the permission request has to be made synchronously inside the tap.
+  let perm = null;
+  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+    try { perm = DeviceMotionEvent.requestPermission(); } catch (e) { perm = Promise.reject(e); }
+  }
+  if (!window.isSecureContext) toast('Open this page over https:// or the sensors will be blocked.', 6000);
+  if (!('geolocation' in navigator)) { toast('This browser has no location access.'); return; }
+  if (perm) {
+    try {
+      const r = await perm;
+      if (r !== 'granted') { toast('Motion access was denied. Reload the page and tap Allow (or reset this site in Safari settings).', 7000); return; }
+    } catch (e) { toast('Could not get motion access: ' + e.message, 6000); return; }
+  }
+  S.cur = { id: 'd' + Date.now(), started: Date.now(), ended: null, segments: [] };
+  S.recorder = new Recorder(onSegment);
+  S.track = []; S.lastFix = null; S.lastAcc = NaN; S.ringN = 0; S.ringI = 0; S.motionTimes = [];
+  S.follow = true; S.startedAt = Date.now();
+  if (!S.scale) S.scale = computeScale([], S.settings);
+  window.addEventListener('devicemotion', onMotion);
+  S.geoId = navigator.geolocation.watchPosition(onFix, onFixErr, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+  S.recording = true;
+  document.body.classList.add('rec'); $('panel').classList.add('rec');
+  $('recDot').classList.add('on'); $('recBtn').textContent = 'Stop & save';
+  setStatus('Starting…');
+  syncPanelHeight();
+  S.raf = requestAnimationFrame(loop);
+  S.autosave = setInterval(() => { if (S.cur && S.cur.segments.length) Store.put(S.cur).catch(() => {}); }, 15000);
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  if (!(await wake())) toast('This browser cannot keep the screen awake. Turn off auto-lock while recording.', 6000);
+}
+
+async function stopDrive() {
+  if (!S.recording) return;
+  S.recording = false;
+  window.removeEventListener('devicemotion', onMotion);
+  if (S.geoId !== null) navigator.geolocation.clearWatch(S.geoId);
+  S.geoId = null;
+  clearInterval(S.autosave); cancelAnimationFrame(S.raf);
+  try { if (S.wakeLock) await S.wakeLock.release(); } catch (e) {}
+  S.wakeLock = null;
+  document.body.classList.remove('rec'); $('panel').classList.remove('rec');
+  $('recDot').classList.remove('on'); $('recBtn').textContent = 'Start drive'; $('clock').textContent = '';
+  $('recenter').style.display = 'none';
+  const d = S.cur; S.cur = null;
+  d.ended = Date.now();
+  liveLine.setLatLngs([]); posMarker.remove();
+  if (d.segments.length) {
+    try { await Store.put(d); } catch (e) { toast('Could not save to storage. Export before closing!'); }
+    S.drives.push(d);
+    const st = S.recorder.stats;
+    toast(`Saved ${d.segments.length} segments (${driveKm(d).toFixed(1)} km). Skipped: ${st.slow} slow, ${st.moved} phone moved.`, 5000);
+  } else {
+    Store.del(d.id).catch(() => {});
+    toast('Nothing was scored. Drive above 15 km/h with a GPS fix.', 5000);
+  }
+  syncPanelHeight();
+  redraw(); renderDrives();
+}
+
+$('recBtn').onclick = () => (S.recording ? stopDrive() : startDrive());
+
+document.addEventListener('visibilitychange', () => {
+  if (!S.recording) return;
+  if (document.visibilityState === 'hidden') { if (S.cur && S.cur.segments.length) Store.put(S.cur).catch(() => {}); }
+  else wake();
+});
+window.addEventListener('pagehide', () => { if (S.cur && S.cur.segments.length) Store.put(S.cur).catch(() => {}); });
+
+// ---- sheet: settings, drives, data ----
+function openSheet() { renderSettings(); renderDrives(); $('sheet').classList.add('open'); $('scrim').classList.add('show'); }
+function closeSheet() { $('sheet').classList.remove('open'); $('scrim').classList.remove('show'); }
+$('menuBtn').onclick = openSheet; $('closeSheet').onclick = closeSheet; $('scrim').onclick = closeSheet;
+
+function renderSettings() {
+  const st = S.settings;
+  for (const b of $('viewSeg').children) b.classList.toggle('on', b.dataset.v === st.view);
+  for (const b of $('scaleSeg').children) b.classList.toggle('on', b.dataset.v === st.scale);
+  $('fixedRow').style.display = st.scale === 'fixed' ? 'flex' : 'none';
+  $('fixLo').value = st.fixedLo; $('fixHi').value = st.fixedHi;
+  $('showBumps').checked = st.showBumps; $('bumpG').value = st.bumpG;
+}
+function changed() { saveSettings(); renderSettings(); redraw(); }
+$('viewSeg').onclick = e => { if (e.target.dataset.v) { S.settings.view = e.target.dataset.v; changed(); } };
+$('scaleSeg').onclick = e => { if (e.target.dataset.v) { S.settings.scale = e.target.dataset.v; changed(); } };
+$('fixLo').onchange = e => { const v = parseFloat(e.target.value); if (v >= 0) { S.settings.fixedLo = v; changed(); } };
+$('fixHi').onchange = e => { const v = parseFloat(e.target.value); if (v > 0) { S.settings.fixedHi = v; changed(); } };
+$('showBumps').onchange = e => { S.settings.showBumps = e.target.checked; changed(); };
+$('bumpG').onchange = e => { const v = parseFloat(e.target.value); if (v > 0) { S.settings.bumpG = v; changed(); } };
+
+function confirmTap(btn, label, action) {
+  if (btn.dataset.armed) { action(); return; }
+  const orig = btn.textContent;
+  btn.dataset.armed = '1'; btn.textContent = label;
+  setTimeout(() => { delete btn.dataset.armed; btn.textContent = orig; }, 3000);
+}
+
+function renderDrives() {
+  const el = $('driveList');
+  el.innerHTML = '';
+  const drives = [...S.drives].sort((a, b) => b.started - a.started);
+  if (!drives.length) { el.innerHTML = '<p class="muted">No drives saved yet.</p>'; return; }
+  for (const d of drives) {
+    const hits = d.segments.filter(s => s.peak >= S.settings.bumpG * G).length;
+    const mean = d.segments.reduce((a, s) => a + s.index, 0) / d.segments.length;
+    const row = document.createElement('div');
+    row.className = 'drive';
+    row.innerHTML = `<div class="meta"><b>${fmtDate(d.started)}</b><span>${driveKm(d).toFixed(1)} km · avg ${mean.toFixed(2)} m/s² · ${hits} big hit${hits === 1 ? '' : 's'}</span></div>`;
+    const show = document.createElement('button'); show.className = 'btn'; show.textContent = 'Show';
+    show.onclick = () => {
+      const b = L.latLngBounds(d.segments.flatMap(s => s.pts));
+      closeSheet(); map.fitBounds(b, { padding: [30, 30] });
+    };
+    const del = document.createElement('button'); del.className = 'btn danger'; del.textContent = 'Delete';
+    del.onclick = () => confirmTap(del, 'Sure?', async () => {
+      await Store.del(d.id).catch(() => {});
+      S.drives = S.drives.filter(x => x.id !== d.id);
+      renderDrives(); redraw();
+    });
+    row.append(show, del);
+    el.appendChild(row);
+  }
+}
+
+function toGeoJSON() {
+  const features = [];
+  for (const d of S.drives) for (const s of d.segments) {
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: s.pts.map(p => [p[1], p[0]]) },
+      properties: {
+        drive: d.id, time: new Date(s.t).toISOString(), index: s.index, rms: s.rms,
+        peak_g: r3(s.peak / G), speed_kmh: Math.round(s.speed * 36) / 10, length_m: s.len, samples: s.n,
+        peak_lat: s.pk ? s.pk[0] : null, peak_lon: s.pk ? s.pk[1] : null,
+      },
+    });
+  }
+  return { type: 'FeatureCollection', bumpmap: { version: 1, exported: new Date().toISOString(), config: CFG }, features };
+}
+function toCSV() {
+  const rows = ['drive,time,lat_start,lon_start,lat_end,lon_end,length_m,speed_kmh,rms,peak_g,index,samples'];
+  for (const d of S.drives) for (const s of d.segments) {
+    const a = s.pts[0], b = s.pts[s.pts.length - 1];
+    rows.push([d.id, new Date(s.t).toISOString(), a[0], a[1], b[0], b[1], s.len, Math.round(s.speed * 36) / 10, s.rms, r3(s.peak / G), s.index, s.n].join(','));
+  }
+  return rows.join('\n');
+}
+async function saveFile(name, text, mime) {
+  const file = new File([text], name, { type: mime });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  const url = URL.createObjectURL(file);
+  const a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+const stamp = () => new Date().toISOString().slice(0, 10);
+$('expGeo').onclick = () => { if (!S.drives.length) return toast('No drives to export yet.'); saveFile(`bumpmap-${stamp()}.geojson`, JSON.stringify(toGeoJSON()), 'application/json'); };
+$('expCsv').onclick = () => { if (!S.drives.length) return toast('No drives to export yet.'); saveFile(`bumpmap-${stamp()}.csv`, toCSV(), 'text/csv'); };
+$('impBtn').onclick = () => $('impFile').click();
+$('impFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const gj = JSON.parse(await f.text());
+    const byDrive = new Map();
+    for (const ft of gj.features || []) {
+      if (!ft.geometry || ft.geometry.type !== 'LineString') continue;
+      const p = ft.properties || {};
+      const id = String(p.drive || 'imported');
+      if (!byDrive.has(id)) byDrive.set(id, []);
+      byDrive.get(id).push({
+        t: Date.parse(p.time) || Date.now(), pts: ft.geometry.coordinates.map(c => [c[1], c[0]]),
+        len: +p.length_m || 0, speed: (+p.speed_kmh || 0) / 3.6, rms: +p.rms || 0, peak: (+p.peak_g || 0) * G,
+        pk: Number.isFinite(p.peak_lat) && Number.isFinite(p.peak_lon) ? [p.peak_lat, p.peak_lon] : null,
+        index: +p.index || 0, n: +p.samples || 0,
+      });
+    }
+    let added = 0, skipped = 0;
+    for (const [id, segs] of byDrive) {
+      if (S.drives.some(d => d.id === id)) { skipped++; continue; }
+      segs.sort((a, b) => a.t - b.t);
+      const d = { id, started: segs[0].t, ended: segs[segs.length - 1].t, segments: segs, imported: true };
+      await Store.put(d).catch(() => {});
+      S.drives.push(d); added++;
+    }
+    toast(`Imported ${added} drive${added === 1 ? '' : 's'}${skipped ? `, ${skipped} already here` : ''}.`);
+    renderDrives(); redraw(); fitAll();
+  } catch (err) { toast('Could not read that file: ' + err.message, 5000); }
+};
+$('clearAll').onclick = () => confirmTap($('clearAll'), 'Tap again to delete everything', async () => {
+  await Store.clear().catch(() => {});
+  S.drives = []; renderDrives(); redraw(); toast('All drives deleted.');
+});
+
+function fitAll() {
+  const pts = S.drives.flatMap(d => d.segments.flatMap(s => s.pts));
+  if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [30, 30], maxZoom: 17 });
+}
+
+function syncPanelHeight() {
+  document.documentElement.style.setProperty('--panel-h', $('panel').offsetHeight + 'px');
+}
+if ('ResizeObserver' in window) new ResizeObserver(syncPanelHeight).observe($('panel'));
+
+(async function init() {
+  await Store.open();
+  try { S.drives = (await Store.all()).filter(d => d && Array.isArray(d.segments) && d.segments.length); }
+  catch (e) { S.drives = []; }
+  redraw(); syncPanelHeight(); fitAll();
+  if (!window.isSecureContext) toast('Open this page over https:// so the phone lets it read GPS and motion.', 7000);
+})();
+</script>
+</body>
+</html>
